@@ -1,0 +1,52 @@
+---
+title: "SQLTest"
+author: "Anirudh"
+date: "10/12/2020"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+library(odbc)
+library(DBI)
+library(dplyr)
+library(dbplyr)
+
+# Data Source Configuration
+drvr <- "SQL Server"
+srvr <- "madappdb-1.ckrzvt7cwi79.us-east-1.rds.amazonaws.com"
+uid <-  "appapi"
+pwd <- "madappsapi"
+prt <- 1433
+chatsurveydb <- "chatsurveydb"
+con <- dbConnect(odbc(),Driver = drvr,Server = srvr,Database = chatsurveydb,UID = uid,PWD = pwd,Port = prt)
+
+# Initially Load Data into field holders - Blank data to start with
+q <- paste("select UserName,ChatID  from SurveyorChat where UserName = '" , "x" , "'",sep='')
+z <- dbGetQuery(con,q)
+z[0,] %>% add_row(UserName='rv$iamuse',Email='rv$iamuseremail')
+
+dbAppendTable(con,"Surveyor",z)
+dbDisconnect(con)
+
+grepl("\\<[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}\\>", as.character('jjn'),ignore.case=TRUE)
+grepl("[^[:alnum:]]",'jjkjkj@@@@@#$%^&xt',ignore.case=TRUE)
+if(nchar(grep("^[[:digit:][:alpha:]]*$", "!"))
+{
+ 'a'
+}
+
+grepl("^[[:digit:][:alpha:]]*$", '!')    
+
+```

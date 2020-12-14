@@ -1,0 +1,929 @@
+#-----------------------------------------------------------------***START APP INTIAL CONFIG***------------------------------------------------------#
+#----------------------------------------------------------------------------------------------------------------------------------------------------#
+
+# LOAD ALL LIBRARIES
+library(tidyverse)
+library(shiny)
+library(shinythemes)
+library(rdrop2)
+library(shinyjs)
+library(lubridate)
+library(ggplot2)
+library(jsonlite)
+library(V8)
+library(base)
+library(odbc)
+library(DBI)
+library(dplyr)
+library(dbplyr)
+
+# DROPBOX TOKEN - FIRST STEP DOWNLOAD FILE TO THE SERVER(TO HANDLE CONVERSATION DATA AVAILABILITY FOR INSTANCES THAN RUN ON VARIOUS SERVERS AS APP SCALES UP)
+token <- read_rds(paste(getwd(),"/Documents/token.rds",sep=""))
+drop_download(dtoken = token,path = "ChatSurvey/Documents/QuestionsData.csv",local_path = paste(getwd(),"/Documents/",sep=""),overwrite = T)
+
+# OPEN THE DOWNLOADED CHAT FILE
+questions <- read_csv(paste(getwd(),"/Documents/QuestionsData.csv",sep=""))
+
+# BY DEFAULT LOAD CHAT NUMBER '1' IN THE BACKEND FIELDS AND KEEP THEM HIDDEN UNTIL AUTHENTICATION
+currentchatids <-   questions %>% distinct(chatid)  %>% as.list()
+randomizedchatid <- 1# questions %>% distinct(chatid) %>%  sample_n(1) %>% as.numeric()
+currentchatorders <- 1#questions %>% filter(chatid==randomizedchatid,user!="Bot") %>% select(chatorder) %>% as.list()
+
+# JS CODE TO SCROLL THE PAGE TO TOP WHENEVER USER CLICKS A BUTTON (FOR MOBILE USAGE LAYOUT)
+jscode <- "shinyjs.toTop = function() {document.body.scrollTop = 0; document.documentElement.scrollTop = 0;}"
+
+# CONFIG FOR STORING USER AND USER INPUT DATA ON COMMON DB SERVER
+drvr <- "SQL Server" #!!!MAKE SURE TO CHANGE THIS AT DEPLOYMENT (When running locally: "SQL Server" ||| When deploying: "SQLServer" )
+srvr <- "xxxxxxxxx"
+uid <-  "appapi"
+pwd <- "xxxxxxxxx"
+prt <- 1433
+chatsurveydb <- "chatsurveydb"
+
+#----------------------------------------------------------------------------------------------------------------------------------------------------#
+#-----------------------------------------------------------------***END OF INTIAL CONNFIG***--------------------------------------------------------#
+
+
+#------------------------------------------------------------------***CREATE UI COMPONENTS***---------------------------------------------------------#
+#----------------------------------------------------------------------------------------------------------------------------------------------------#
+
+# LOAD UI COMPONENTS TO UI VARIABLE
+ui <- fluidPage(
+    # SET INTITAL THEME
+    theme = shinytheme("flatly"),
+    useShinyjs(),
+    extendShinyjs(text = jscode, functions = c("toTop")),
+
+    # ADD APPLICATION TITLE AND STYLES
+    titlePanel(title ="User Emotion Survey",windowTitle = "Survey"),
+    tags$h4(id="Beta","(For Machine Learning - Beta)"),
+    tags$head(
+        tags$style(HTML("
+                          @import url('//fonts.googleapis.com/css?family=Rancho');
+                          
+                          h2 {
+                            font-family: 'Arial';
+                            line-height: 1.1;
+                            color: TEAL;
+                            background-color:MINTCREAM;
+                            text-align:center;
+                          }
+                          
+                          h3 {
+                            font-family: 'Arial';
+                            line-height: 1.1;
+                            color: WhiteSmoke;
+                            background-color:LightSlateGray;
+                            text-align:center;
+                          }
+                          
+                          h4 {
+                            font-family: 'Arial';
+                            line-height: 1.1;
+                            color: navy;
+                            text-align:center;
+                          }
+                          
+                          h5 {
+                            font-family: 'Arial';
+                            line-height: 1.1;
+                            color: navy;
+                            text-align:center;
+                          }
+                          
+                          h6 {
+                            font-family: 'Arial';
+                            line-height: 1.1;
+                            color: SALMON;
+                            text-align:center;
+                            font-weight: bold;
+                          }
+                          
+                          div .one{
+                            font-family: Calibri;
+                            font-size: 20px;
+                            line-height: 1.1;
+                            color: black;
+                            text-align:center;
+                            border: 1px solid grey;
+                          }
+                          
+                          div .two{
+                            font-family: Calibri;
+                            font-size: 15px;
+                            line-height: 1.1;
+                            color: darkgrey;
+                            text-align:center;
+                            border: 1px grey;
+                          }
+                          
+                          div .three{
+                            font-family: Calibri;
+                            font-size: 15px;
+                            line-height: 1.1;
+                            color: lightgrey;
+                            text-align:center;
+                            border: 1px grey;
+                          }
+                          
+                          div .userui{
+                            font-family: Calibri;
+                            font-size: 15px;
+                            line-height: 1.1;
+                            color: SALMON;
+                            text-align:center;
+                            border: 1px grey;
+                          }
+                          
+                          div .warning{
+                            font-family: Calibri;
+                            font-size: 15px;
+                            line-height: 1.1;
+                            color: red;
+                            text-align:center;
+                            border: 1px grey;
+                          }
+                          .ima {
+                          filter:invert(100%);
+                          }
+                          
+                          .imar {
+                          filter:hue-rotate(40deg)
+                          }
+        "))
+    ),
+    tags$h3(id="welcome","Welcome"),
+    
+    # FIRST LINE AFTER WELCOME - INTRODUCTION AND BRIEFING OF GAME
+    fluidRow(column(h5(htmlOutput(outputId = "readme"))
+             ,width = 12,align="center"),style = "background-color: MINTCREAM;"),
+    
+    # AUTHENTICATION UI FORM- EVERYTHING FROM CREATE PROFILE, RETURNING USER AND BEGIN BUTTON DEFINED HERE
+    fluidRow(
+        column(h6(textOutput(outputId = "CreateUser")),
+               textInput("username",label = NULL,placeholder = "User Name* -Remember this"),
+               textInput("userpw",label = NULL,placeholder = "Password* -Remember this"),
+               textInput("useremail",label = NULL,placeholder = "Email (Optional)"),
+               selectInput("usergender",label=NULL,choices = c("Select Gender","Male","Female","Other","Blank"),selected = "Select Gender"),
+               selectInput("userage",label=NULL,choices = c("Select Age",1:100),selected = "Select Age"),
+               selectInput("userexp",label=NULL,choices = c("Customer Service Experience (Yrs)",c(0:50)),selected = "Customer Service Experience (Yrs)")
+               ,align="center",width = 4),
+        column(h6(textOutput(outputId = "ReturningUser")),
+               textInput("retusername",label = NULL,placeholder = "User Name*"),
+               textInput("retuserpw",label = NULL,placeholder = "Password*"),
+               align="center",width = 4),
+        column(
+            actionButton(inputId = "begin",
+                         label = "Begin"),
+            (tags$div(class="warning",htmlOutput(outputId = "notemsg")))
+            ,width = 4,align="center"),style = "background-color: MINTCREAM;"
+    ),
+    
+    # USER LOGIN DETAILS FORM - LOGIN USER DETAIL, ACTIVE CHATID(HIDDEN), ACTIVE CHATORDER(HIDDEN) AND TIMER
+    fluidRow(
+        column(tags$div(class="userui",htmlOutput(outputId = "CurrentUser")),width = 2),
+        column(selectInput("currentchatid","Select Chat:",currentchatids,selected = randomizedchatid),width = 1),
+        column(selectInput("currentchatorder","Chat Order:",currentchatorders,selected = currentchatorders[[1]][1]),width = 1),
+        column(h4(textOutput("currentTime")),plotOutput("Chart",width = 100,height = 100),align="center",width = 5),style = "background-color: MINTCREAM;"
+    ),
+    
+    # USER NOTE FORM - ONLY USED IN PRACTICE ROUND
+    fluidRow(
+        column(h4(htmlOutput(outputId = "usernotes"))
+            ,offset = 1,width = 11,align="center"),style = "background-color: MINTCREAM;"
+    ),
+    
+    # PADDING
+    fluidRow(style = "padding-top:10px;background-color: LightSlateGray;"),
+    
+    # LADDER GRID FORM - GRID LIKE FORM FOR CHAT TEXT TO DISPLAY
+    fluidRow(
+        column(tags$div(id="top51",class="three",p(textOutput("usrln1"))),width = 2),
+        column(tags$div(id="top52",class="three",p(textOutput("txtln1"))),width = 10)
+    ),
+    fluidRow(
+        column(tags$div(id="top41",class="two",p(textOutput("usrln2"))),width = 2),
+        column(tags$div(id="top42",class="two",p(textOutput("txtln2"))),width = 10)
+    ),
+    fluidRow(
+        column(tags$div(id="top31",class="one",p(textOutput("usrln3"))),width = 2),
+        column(tags$div(id="top32",class="one",p(textOutput("txtln3"))),width = 10)
+    ),
+    fluidRow(
+        column(tags$div(id="top21",class="two",p(textOutput("usrln4"))),width = 2),
+        column(tags$div(id="top22",class="two",p(textOutput("txtln4"))),width = 10)
+    ),
+    fluidRow(
+        column(tags$div(id="top11",class="three",p(textOutput("usrln5"))),width = 2),
+        column(tags$div(id="top12",class="three",p(textOutput("txtln5"))),width = 10)
+    ),
+    
+    # PADDING
+    fluidRow(style = "padding-top:10px;background-color: LightSlateGray;"),
+
+    # USER CONTROLS UI - ANGER , HAPPY, CALL THE MANAGER , NEXT SENTENCE BUTTON
+    fluidRow(
+        column(
+            sliderInput(inputId = "angerscl",
+                        label = "Anger Scale:",
+                        min = 0,
+                        max = 5,
+                        value = 0),
+            imageOutput("angerpic",width = "1%", inline = T)
+            ,align="center",width = 3
+            ),
+        column(
+            sliderInput(inputId = "happyscl",
+                        label = "Happy Scale:",
+                        min = 0,
+                        max = 5,
+                        value = 0),
+            imageOutput("happypic",width = "1%", inline = T)
+            ,align="center",width = 3
+        ),
+        column(
+            tags$button(
+                id = "manager_button",
+                value ="call ",
+                img(src ="https://image.flaticon.com/icons/svg/2706/2706950.svg",
+                    height = "100px",width="100px",filter= 100
+                )
+            ),
+            textOutput(outputId = "managertxt"),
+            align="center",width = 3
+        ),
+        column(
+            actionButton(inputId = "next_btn",
+                        label = "Next Sentence")
+            ,width = 3
+        ),style = "padding-top:15px"
+        ),
+    
+    # SUBMIT & RESULTS UI - FINAL SUBMIT BUTTON, NEXT ROUND BUTTON AND RESULTS CONTROLS
+    fluidRow(
+        column(
+            actionButton(inputId = "submit_btn",
+                         label = "Submit Survey")
+            ,width = 3)
+    ),
+    fluidRow(
+        column(h4(htmlOutput("result")),
+               imageOutput("resultimage", inline = T),
+               h4(textOutput("nextroundtxt")),
+               actionButton(inputId = "nextround",
+                            label = "Next Round?"),
+               offset = 4,width = 4,align="center")
+    )
+)
+
+#------------------------------------------------------------------***END BUILDING UI COMPONENTS***--------------------------------------------------#
+#----------------------------------------------------------------------------------------------------------------------------------------------------#
+
+#------------------------------------------------------------------***SERVER SIDE CONTROLS***--------------------------------------------------------#
+#----------------------------------------------------------------------------------------------------------------------------------------------------#
+
+# LOAD SERVER SIDE FUNCTIONS TO VARIABLE
+server <- function(input, output, session) {
+    
+    # INITIALIZE DYNAMIC VARIABLES WITH BASE VALUES
+    rv <- reactiveValues()
+    rv$mgr <- "Call the manager ?"
+    rv$stop <- 0
+    rv$max_chatorder <- questions %>% filter(chatid==randomizedchatid,user!="Bot") %>% summarise(chatorder=max(chatorder)) %>% as.numeric()
+    rv$user_chatorder <- questions %>% filter(chatid==randomizedchatid,user!="Bot") %>% arrange(chatorder) %>% select(chatorder)
+    rv$timer <- 60
+    rv$x0<- Sys.time() # time at the beginning the timer
+    rv$usrtime <- Sys.time()
+    rv$day <- format(Sys.time(), "%b %d %Y") %>% str_replace_all(" ","_")
+    rv$filename <- ""
+    rv$accuracy <- ""
+    rv$timing <- ""
+    rv$diff <- 0
+    rv$norows <- 0
+    rv$iamuser <- ''
+    rv$iamuseremail <- ''
+    
+    # HIDE ALL UNNECESSARY COMPONENTS UNTIL AUTHENTICATION IS COMPLETE
+    hideElement("submit_btn")
+    hideElement("currentchatid")
+    hideElement("currentchatorder")
+    hideElement("nextroundtxt")
+    hideElement("nextround")
+    hideElement("result")
+    hideElement("resultimage")
+    hideElement("next_btn")
+    hideElement("angerscl")
+    hideElement("happyscl")
+    hideElement("top51")
+    hideElement("top52")
+    hideElement("top41")
+    hideElement("top42")
+    hideElement("top31")
+    hideElement("top32")
+    hideElement("top21")
+    hideElement("top22")
+    hideElement("top11")
+    hideElement("top12")
+    hideElement("managertxt")
+    hideElement("manager_button")
+    hideElement("angerpic")
+    hideElement("happypic")
+    hideElement("currentTime")
+    hideElement("Chart")
+    hideElement("top51")
+    hideElement("top52")
+    hideElement("top41")
+    hideElement("top42")
+    hideElement("top31")
+    hideElement("top32")
+    hideElement("top21")
+    hideElement("top22")
+    hideElement("top11")
+    hideElement("top12")
+    
+    # CODE FOR AUTO-SCROLLING TO TOP WHENEVER A BUTTON IS CLICKED
+    observeEvent(input$next_btn, {
+        js$toTop();
+    })
+    
+    # LOCAL DYNAMIC TABLE TO RECORD USERS RESPONSE
+    rv$local_opinion <- tibble(
+        UserName = character(),
+        ChatID = numeric(),
+        ChatOrder = numeric(),
+        AngerScore = numeric(),
+        HappyScore = numeric(),
+        StopChat = numeric(),
+        Timer = numeric()
+    )
+    
+    # LOAD TEXT FOR USER LOGIN FIELDS
+    output$CreateUser <- renderText({ 'Create Profile (New User)' })
+    output$ReturningUser <- renderText({ 'Returing User' })
+    
+    # LOAD READ ME COMPONENT (i.e., GAME BRIEFING AND INTRODUCTION)
+    output$readme <- renderText({"<b>Want to test how good you are at customer service, how you compete against other people?</b>
+            <br/>This survey shows you various Customer and Chatbot interaction texts.
+            You need to read the conversation and submit your opinion if the customer is happy or angry at each highlighted sentence, if so at what level (on 0-5 scale). 
+            Additionally, there is a 'Call the Manger' button that can be used only once at any time in the chat, through which you can express extreme disapporval/anger to the way Bot is serving Customer.
+            
+            <br/><br/>Complete at least 10 chat surveys and make sure to use appropriate email address, to get a chance to win <b> $10 Amazon giftcard!</b>
+            <br/><b><u>Also make sure to check out our leaderboard. Its your turn to get up there and shine!</u></b>."})
+    
+    # ACTION TO PERFORM ON CLICKING BEGIN BUTTON
+    onclick("begin",({
+        hideElement("begin")
+        
+        if (nchar(input$username)>0 | nchar(input$retusername)>0) {
+            
+            # OPEN DB CONNECTION GET ALL USERS FROM DATABASE
+            con <- dbConnect(odbc(),Driver = drvr,Server = srvr,Database = chatsurveydb,UID = uid,PWD = pwd,Port = prt)
+            userlogs <- dbGetQuery(con,"select UserName,UP,Email,Age,Gender,Exp  from Surveyor")
+            
+            # CODE TO EXECUTE WHEN NEW USER DETAILS ARE FILLED, CHECK IF USER NAME IS ALREADY TAKEN AND PASSWORK CRITERIA IS MET, THEN CREATE USER IN DB
+            if (nchar(input$username)>0) {
+                usercnt <- userlogs %>% filter(UserName == input$username) %>% count() %>% as.numeric()
+                if (!(grepl("^[[:digit:][:alpha:]]*$", input$username))) {
+                    dbDisconnect(con)
+                    output$notemsg <- renderText({ 'User Name can only be alpha numeric' })
+                    showElement("begin")
+                    return()
+                }
+                if (usercnt>0) {
+                    dbDisconnect(con)
+                    output$notemsg <- renderText({ 'User Already Exist' })
+                    showElement("begin")
+                    return()
+                }
+                if (nchar(input$userpw)<8) {
+                    output$notemsg <- renderText({ 'Password must be atleast 8 characters long' })
+                    dbDisconnect(con)
+                    showElement("begin")
+                    return()
+                }
+                if (nchar(input$useremail)>0  & !(grepl("\\<[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}\\>", input$useremail,ignore.case=TRUE))) {
+                    output$notemsg <- renderText({ 'Invalid Email Address' })
+                    showElement("begin")
+                    return()
+                }
+                rv$iamuser <- input$username
+                rv$iamuseremail <- input$useremail
+                userlogs <- userlogs[0,] %>% add_row(UserName=rv$iamuser,UP=input$userpw,Email=rv$iamuseremail,Age=input$userage,Gender=input$usergender,Exp=input$userexp)
+                dbAppendTable(con,"Surveyor",userlogs)
+                dbDisconnect(con)
+            }
+            
+            # CODE TO EXECUTE WHEN RETURING USER DETAILS ARE FILLED, CHECK USER FOR AUTHENTICATION AND LOAD USER DETAILS PAGE
+            if (nchar(input$retusername)>0) {
+                dbDisconnect(con)
+                usercnt <- userlogs %>% filter(UserName == input$retusername,UP==input$retuserpw) %>% count() %>% as.numeric()
+                if (usercnt==0) {
+                    output$notemsg <- renderText({ 'User with this username and passord does not exist.<br/>Forgot User Name?,<br/>Contact: z1861188@students.niu.edu' })
+                    showElement("begin")
+                    return()
+                }
+                rv$iamuser <- input$retusername
+                rv$iamuseremail <- userlogs %>% filter(UserName == input$retusername) %>% mutate(Email=if_else(is.na(Email),'N/A',Email)) %>% select(Email) %>% as.character()
+            }
+            if (rv$iamuseremail=='') {
+                output$CurrentUser <- renderText({ cbind('<b>Logged in as: <br/> ',rv$iamuser,'</b><br/> To logoff, just close the browser window <br/>Do Not forget to Submit Survey at the end of the chat to save changes') })
+            }else{
+                output$CurrentUser <- renderText({ cbind('<b>Logged in as: <br/> ',rv$iamuser ,'(',rv$iamuseremail,')','</b><br/> To logoff, just close the browser window<br/>Do Not forget to Submit Survey at the end of the chat to save changes') })
+            }
+            
+            # HIDE UNNECESSARY HTML ELEMENTS, LIKE WELCOME AND LOGIN PAGE FORM CONTROLS
+            hideElement("welcome")
+            hideElement("Beta")
+            hideElement('CreateUser')
+            hideElement('ReturningUser')
+            hideElement('username')
+            hideElement('useremail')
+            hideElement('userpw')
+            hideElement("usergender")
+            hideElement("userage")
+            hideElement("userexp")
+            hideElement('retusername')
+            hideElement('retuserpw')
+            
+            # REFRESH SUERVEY TO LOAD FIRST CHAT DETAILS ON SCREEN
+            refresh_survey()
+        }
+        
+        # CODE TO HANDLE BLANK USER NAME
+        else
+        {
+            showElement("begin")
+            output$notemsg <- renderText({ 'Please enter User Name' })
+        }
+    }))
+    
+    # CODE TO HANDLE TEXT OF THE TIMER (SECS AND TIME UP TEXT)
+    output$currentTime <- renderText({
+        if (round(rv$x0+rv$timer-Sys.time())>=0) {
+            invalidateLater(1000, session) # TIMER REFRESH INTERVAL
+            print(c("rv$timer=",rv$timer,(round(((minute(rv$x0)-minute(Sys.time()))*60)+(second(rv$x0)-second(Sys.time())))+ rv$timer)))
+            print(c(rv$x0,Sys.time()))
+            paste("Time left :", (round(((minute(rv$x0)-minute(Sys.time()))*60)+(second(rv$x0)-second(Sys.time())))+ rv$timer)," secs.")
+        }
+        else{
+            print("Time up! You can still complete the survey")
+        }
+        #invalidateLater(1000, session)
+    })
+    
+    # CODE TO HANDLE PIE CHART TIMER 
+    output$Chart<-renderPlot({
+        if (round(rv$x0+rv$timer-Sys.time())>0) {
+            invalidateLater(1000, session) # refresh the chart every second
+        }
+        
+        t<-rv$timer
+        x1<-Sys.time() # CURRENT TIME
+        x2<-round(as.numeric((minute(x1)-minute(rv$x0))*60+(second(x1)-second(rv$x0))),0) 
+        df<-data.frame(art_of_time=c("gone","left"), seconds=c(x2,t-x2))
+        df$fraction<-df$seconds/t; df$ymax=cumsum(df$fraction); df$ymin = c(0, df$ymax[1])
+        
+        p = ggplot(df, aes(fill=art_of_time, ymax=ymax, ymin=ymin, xmax=4, xmin=3)) +
+            geom_rect(colour="grey30", fill=c("red","darkblue")) +
+            coord_polar(theta="y") +
+            xlim(c(0, 4)) + theme_bw() +
+            theme(panel.grid=element_blank()) + theme(axis.text=element_blank()) +
+            theme(axis.ticks=element_blank())+
+            theme(
+                panel.background = element_rect(fill = "mintcream",
+                                                colour = "mintcream"),panel.border = element_blank())
+        if (df[2,2]>0){p} else {print("stop")} 
+    })
+    
+    # CODE TO LOAD THE LADDER STYLE GRID WITH USER TEXT
+    output$usrln1 <- renderText({
+        u1 <- questions %>% filter(chatid==input$currentchatid,chatorder==(as.numeric(input$currentchatorder)-2)) %>% select(user) %>% as.character()
+        if (u1 == "character(0)") {
+            u1 <- NULL
+        }
+        u1
+    })
+    output$usrln2 <- renderText({
+        u2 <- questions %>% filter(chatid==input$currentchatid,chatorder==(as.numeric(input$currentchatorder)-1)) %>% select(user) %>% as.character()
+        if (u2 == "character(0)") {
+            u2 <- NULL
+        }
+        u2
+    })
+    output$usrln3 <- renderText({
+        u3 <- questions %>% filter(chatid==input$currentchatid,chatorder==input$currentchatorder) %>% select(user) %>% as.character()
+        if (u3 == "character(0)") {
+            u3 <- NULL
+        }
+        u3
+    })
+    output$usrln4 <- renderText({
+        u4 <- questions %>% filter(chatid==input$currentchatid,chatorder==(as.numeric(input$currentchatorder)+1)) %>% select(user) %>% as.character()
+        if (u4 == "character(0)") {
+            u4 <- NULL
+        }
+        u4
+    })
+    output$usrln5 <- renderText({
+        u5 <- questions %>% filter(chatid==input$currentchatid,chatorder==(as.numeric(input$currentchatorder)+2)) %>% select(user) %>% as.character()
+        if (u5 == "character(0)") {
+            u5 <- NULL
+        }
+        u5
+    })
+    
+    output$txtln1 <- renderText({
+        q1 <- questions %>% filter(chatid==input$currentchatid,chatorder==(as.numeric(input$currentchatorder)-2)) %>% select(text) %>% as.character()
+        if (q1 == "character(0)") {
+            q1 <- NULL
+        }
+        q1
+    })
+    output$txtln2 <- renderText({
+        q2 <- questions %>% filter(chatid==input$currentchatid,chatorder==(as.numeric(input$currentchatorder)-1)) %>% select(text) %>% as.character()
+        if (q2 == "character(0)") {
+            q2 <- NULL
+        }
+        q2
+    })
+    output$txtln3 <- renderText({
+        q3 <- questions %>% filter(chatid==input$currentchatid,chatorder==input$currentchatorder) %>% select(text) %>% as.character()
+        if (q3 == "character(0)") {
+            q3 <- NULL
+        }
+        q3
+    })
+    output$txtln4 <- renderText({
+        q4 <- questions %>% filter(chatid==input$currentchatid,chatorder==(as.numeric(input$currentchatorder)+1)) %>% select(text) %>% as.character()
+        if (q4 == "character(0)") {
+            q4 <- NULL
+        }
+        q4
+    })
+    output$txtln5 <- renderText({
+        q5 <- questions %>% filter(chatid==input$currentchatid,chatorder==(as.numeric(input$currentchatorder)+2)) %>% select(text) %>% as.character()
+        if (q5 == "character(0)") {
+            q5 <- NULL
+        }
+        q5
+    })
+    
+    # CODE TO MANAGE 'CALL THE MANAGER' TEXT
+    output$managertxt <- renderText({
+        if (rv$stop==0) {
+            rv$mgr
+        }
+        else
+        {
+            rv$mgr <- "Manager is Informed"
+            rv$mgr
+        }
+        })
+    
+    # CODE TO MANAGE ACTION ON NEXT BUTTON CLICK
+    onclick("next_btn",({
+        
+        # CODE TO EXECUTE IF CURRENT CHAT IS 1 (i.e, THE FIRST TRAINING PRACTICE CHAT)
+        if (as.numeric(input$currentchatid)==1) {
+            usrperfnote <- ''
+            if (!is.na(questions %>% filter(chatid==1,chatorder==as.numeric(input$currentchatorder),angrybaseline==as.numeric(input$angerscl),happybaseline==as.numeric(input$happyscl),endchatind==as.numeric(rv$stop)) %>% select(chatid) %>% as.numeric())) {
+                usrperfnote <- '<span style="color: green"><b>Great Job!</b></br></span>'
+            }
+            else{
+                if (as.numeric(input$currentchatorder)==2) {
+                    temphint <- '<div style="background-color: #fffae6;"><u>Hint</u>: <i>Move the Happy Silder to : 3 and Click "Next" </i></div>'
+                }
+                else if (as.numeric(input$currentchatorder)==4) {
+                    temphint <- '<div style="background-color: #fffae6;"><u>Hint</u>: <i>The customer’s statement is pretty neutral, just click “Next”</i></div>'
+                }
+                else if (as.numeric(input$currentchatorder)==6) {
+                    temphint <- '<div style="background-color: #fffae6;"></br><u>Hint</u>: <i>Whoa, Customer seems pretty angry here with the bots response.</br>Adjust the anger slider to 4 and click "Next".</i></div>'
+                }
+                else if (as.numeric(input$currentchatorder)==8) {
+                    temphint <- '<div style="background-color: #fffae6;"><u>Hint</u>: <i>The Bot just ruined it. It is time to cut the bot and bring in the manager. </br> Adjust the anger slider to 5 and Click on "Manager Icon" and "Next"</i></div>'
+                }
+                else if (as.numeric(input$currentchatorder)==10) {
+                    temphint <- '<div style="background-color: #fffae6;"><u>Hint</u>: <i> Set the anger slider to 4, happy slider to 1</i></div>'
+                }
+                usrperfnote <- paste(temphint,'<br/><span style="color: Tomato"><b>Come On! you know you can do this better. Follow the hint</b></br></span>')
+                output$usernotes <- renderText({  usrperfnote})
+                return()
+            }
+            if (as.numeric(input$currentchatorder)==2) {
+                usrperfnote <- paste(usrperfnote,c('<div style="background-color: #fffae6;"></br>You now see the next Customer utterance.</br>
+                                                Continue reading the customer response and rate accordingly.</br>
+                                                <u>Hint</u>: <i>The customer’s statement is pretty neutral, just click “Next”</i></div>'))
+                output$usernotes <- renderText({  usrperfnote })
+            }
+            if (as.numeric(input$currentchatorder)==4) {
+                usrperfnote <- paste(usrperfnote,'<div style="background-color: #fffae6;"></br> <u>Hint</u>: <i>Whoa! Customer seems pretty angry here with the bots response.</br>Adjust the anger slider to 4 and click "Next".</i></div>')
+                output$usernotes <- renderText({  usrperfnote })
+            }
+            if (as.numeric(input$currentchatorder)==6) {
+                usrperfnote <- paste(usrperfnote,c('<div style="background-color: #fffae6;"></br><u><b>Manager Icon Use :</u></b> Click the “Call the manager?” button when you think a human should intervene in the conversation. You can click the “Call the manager?” button when you think Customer no longer wants to chat with a Bot, but rather a human.</br></br>
+                                                        <u>Hint</u>: <i>The Bot just ruined it. It is time to cut the bot and bring in the manager. </br> Adjust the anger slider to 5 and Click on "Manager Icon" and "Next"</i></div>'))
+                output$usernotes <- renderText({  usrperfnote })
+                enable("manager_button")
+            }
+            if (as.numeric(input$currentchatorder)==8) {
+                usrperfnote <- paste(usrperfnote,c('<div style="background-color: #fffae6;"></br>There is possibility that a customer can experience both emotions at a time.</br>Seems like customer is releived and now encompasses both anger and happiness to a certain extent.</br></br>
+                                                        <u>Hint</u>: <i> Set the anger slider to 4, happy slider to 1</i></div>'))
+                output$usernotes <- renderText({  usrperfnote })
+            }
+            if (!(as.numeric(input$currentchatorder) %in% c(2,4,6,8)) ) {
+                usrperfnote <- paste("</br> KUDOS! Your training is complete.<br/>Click submit survey to complete this exercise. <br/> Click Next Round to enter the real deal!")
+                output$usernotes <- renderText({  usrperfnote })
+            }
+        }
+        
+        # SAVE USERS RESPONSE TO LOCAL OPNION TABLE, RESET CONTROLS AND LOAD NEXT UTTERANCE OF THAT CONVERSATION
+        rv$local_opinion <- rv$local_opinion %>% add_row(UserName=rv$iamuser,ChatID=as.numeric(input$currentchatid),ChatOrder=as.numeric(input$currentchatorder),AngerScore=as.numeric(input$angerscl) ,HappyScore=as.numeric(input$happyscl) ,StopChat=rv$stop,Timer = round(as.numeric((minute(Sys.time())-minute(rv$usrtime))*60+(second(Sys.time())-second(rv$usrtime))),0) )
+        updateSliderInput(session = session,inputId = "angerscl",value = 0)
+        updateSliderInput(session = session,inputId = "happyscl",value = 0)
+        rv$timer <- 60
+        rv$x0<- Sys.time()
+        
+        # IF NEXT UTTRANCE DOES NOT EXIST, SHOW SUBMIT SURVEY FORM
+        if (as.numeric(input$currentchatorder) == rv$max_chatorder) {
+            submit_btned_survey()
+        }
+        
+        updateSelectInput(session,inputId ="currentchatorder",selected = rv$user_chatorder  %>%  filter(chatorder>as.numeric(input$currentchatorder)) %>% summarise(min(chatorder)) %>% as.numeric() )
+        rv$usrtime <-  Sys.time()
+    }))
+    
+    # CODE TO MANAGE SURVEY FORM
+    submit_btned_survey <- function() {
+        
+        # HIDE UNNECESSARY HTML ELEMENTS 
+        hideElement("next_btn")
+        hideElement("angerscl")
+        hideElement("happyscl")
+        hideElement("managertxt")
+        hideElement("manager_button")
+        hideElement("angerpic")
+        hideElement("happypic")
+        hideElement("currentTime")
+        hideElement("Chart")
+        hideElement("top51")
+        hideElement("top52")
+        hideElement("top41")
+        hideElement("top42")
+        hideElement("top31")
+        hideElement("top32")
+        hideElement("top21")
+        hideElement("top22")
+        hideElement("top11")
+        hideElement("top12")
+        
+        # LOGIC TO COMPUTE HOW WELL USER PERFORMED, INTERMS OF TIMING AND ACCURACY
+        showElement("submit_btn")
+        rv$timing <-rv$local_opinion %>% summarise(mean(Timer)) %>% as.numeric()
+        rv$diff <- rv$local_opinion %>% inner_join(questions %>% select(chatid,chatorder,angrybaseline,happybaseline),by=(c("ChatID"="chatid","ChatOrder"="chatorder"))) %>% mutate(angerdiff=abs(AngerScore-angrybaseline),happydiff=abs(HappyScore-happybaseline)) %>% mutate(diff=angerdiff+happydiff) %>% summarise(totdiff=sum(diff)) %>% as.numeric()
+        rv$norows <- rv$local_opinion %>%  nrow() %>% as.numeric() 
+        if (rv$diff==(rv$norows*10)) {
+            rv$accuracy <- 0
+        }
+        else if(rv$diff==0){
+            rv$accuracy <- 100
+        }
+        else{
+            rv$accuracy <- (((rv$norows*10)-rv$diff)/(rv$norows*10))*100
+        }
+    }
+    
+    # MANAGE ANGER EMOJI BASED ON SLIDER
+    output$angerpic <- renderImage({
+        filename <- normalizePath(file.path('./images',
+                                            paste('a', input$angerscl, '.png', sep='')))
+        list(src = filename,
+             width=75,
+             height=75,
+             alt = paste("Image number", input$angerscl))
+    }, deleteFile = FALSE)
+    
+    # MANAGE HAPPINESS EMOJI BASED ON SLIDER
+    output$happypic <- renderImage({
+        filename <- normalizePath(file.path('./images',
+                                            paste('h', input$happyscl, '.png', sep='')))
+        list(src = filename,
+             width=75,
+             height=75,
+             alt = paste("Image number", input$happyscl))
+        
+    }, deleteFile = FALSE)
+    
+    # LOGIC FOR MANAGER BUTTON CLICK ACTION
+    onclick("manager_button",({
+        rv$stop <- 1
+        disable("manager_button")
+    }))
+    
+    # LOGIC TO HANDLE SURVEY SUBMISSION
+    onclick("submit_btn",({
+        hideElement("submit_btn")
+        
+        # SAVE USERS SUBMISSION TO DATABASE (BOTH HIS OPNION AND PERFORMANCE RESULTS)
+        con <- dbConnect(odbc(),Driver = drvr,Server = srvr,Database = chatsurveydb,UID = uid,PWD = pwd,Port = prt)
+        query <- paste("select top 1 UserName,ChatID,Accuracy,Timetaken  from SurveyorPerformance")# where UserName = '" , rv$iamuser , "'",sep='')
+        chatlogs <- dbGetQuery(con,query)
+        chatlogs <- chatlogs[0,] %>% add_row(UserName=rv$iamuser,ChatID=as.numeric(input$currentchatid),Accuracy=rv$accuracy,Timetaken=rv$timing)
+        dbAppendTable(con,"SurveyorPerformance",chatlogs)
+        dbAppendTable(con,"SurveyResult",rv$local_opinion)
+        dbDisconnect(con)
+        
+        # LOAD ELEMENTS THAT ASK IF USER WANT TO CONTINUE TO NEXT ROUND
+        showElement("nextroundtxt")
+        showElement("nextround")
+        showElement("result")
+        showElement("resultimage")
+    }))
+    
+    # ACTION TO PERFORM IF USER CLICKS NEXT ROUND
+    onclick("nextround",({
+        refresh_survey()
+    }))
+    
+    # LOGIC TO MANAGE ACTION WHEN REFRESH SURVEY IS REQUESTED
+    refresh_survey <- function() {
+        # HIDE UNNECESSARY ELEMENTS
+        hideElement('readme')
+        hideElement('usernotes')
+        hideElement("notemsg")
+        
+        # OPEN DB CONNECTION TO GET CHATS THAT USER HAS ALREADY SURVEYED
+        con <- dbConnect(odbc(),Driver = drvr,Server = srvr,Database = chatsurveydb,UID = uid,PWD = pwd,Port = prt)
+        query <- paste("select UserName,ChatID  from SurveyorPerformance",sep="")
+        userchatlogs <- dbGetQuery(con,query)
+        dbDisconnect(con)
+        userchatlogs <- userchatlogs %>% filter(UserName==rv$iamuser) %>% rename(chatid= ChatID)
+        
+        # GIVING INVALID CHAT ID JUST INTIALIZE BLANK LOCAL TABLE
+        rv$local_opinion <- rv$local_opinion %>% filter(ChatID==99999999999999999999) 
+        
+        #INITIALIZE ANGER HAPPINESS SLIDERS TO 0
+        updateSliderInput(session = session,inputId = "angerscl",value = 0)
+        updateSliderInput(session = session,inputId = "happyscl",value = 0)
+        
+        # CHECKING IF USER HAD TAKEN THE PRACTICE CHAT OR NOT, IF NOT LOGIC TO INITIALIZE PRACTICE CHAT
+        if (is.na(userchatlogs %>% filter(chatid==1) %>% select(chatid) %>% as.numeric())) {
+           newchatid <- 1
+           output$usernotes <- renderText({ 
+               c('
+                 <div style="background-color:#e6f3ff;">
+                 <u><b> Lesson 101: Getting Started </b></u><br/> Learn how to play this game by following the hints in <span style="color: orange"><b>yellow</b></span> highligted box below.<br/>
+                 Read the customer response in <span style="color: black"><b>black</b></span> focus box.</br>Imagine you are the Customer, how would you react? and react accordingly
+                 </span> </div>',
+               '<div style="background-color: #fffae6;">Before reading the hint, try to get an understanding of the conversation happening below and why are rating it the way were are..<br/>',
+               '<u>Hint</u>: <i>Move the Happy Silder to 3 and Click "Next" </i></div>')
+               })
+           showElement('usernotes')
+           disable("manager_button")
+        }
+        else{
+           newchatid <- anti_join(questions,userchatlogs,by="chatid") %>% distinct(chatid) %>%  sample_n(1) %>% as.numeric()
+           enable("manager_button")
+        }
+        if(is.na(newchatid)){
+            output$usernotes <- renderText({ c('Congratulations, you have completed the entire survey.  Thank you for your time!') })
+            showElement('usernotes')
+            return()
+        }
+        
+        # INITIALIZE DYNAMIC VARIABLES TO NEW CHATID, THAT USER HAS NOT TAKEN EARLIER
+        rv$user_chatorder <- questions %>% filter(chatid==newchatid) %>% filter(user != "Bot") %>% select(chatorder) %>% arrange(chatorder)
+        newchatorders <- rv$user_chatorder %>% as.list()
+        rv$max_chatorder <- max(sapply(newchatorders, max))
+        updateSelectInput(session,inputId ="currentchatid",selected = newchatid )
+        updateSelectInput(session,inputId ="currentchatorder",choices = newchatorders,selected = newchatorders[[1]][1])
+        
+        # HIDE UNNECESSARY AND SHOW REQUIRED ELEMENTS
+        showElement("top51")
+        showElement("top52")
+        showElement("top41")
+        showElement("top42")
+        showElement("top31")
+        showElement("top32")
+        showElement("top21")
+        showElement("top22")
+        showElement("top11")
+        showElement("top12")
+        showElement("next_btn")
+        showElement("angerscl")
+        showElement("happyscl")
+        showElement("managertxt")
+        showElement("manager_button")
+        showElement("angerpic")
+        showElement("happypic")
+        showElement("currentTime")
+        showElement("Chart")
+        hideElement("submit_btn")
+        hideElement("nextroundtxt")
+        hideElement("nextround")
+        hideElement("result")
+        hideElement("resultimage")
+        
+        #INTIALIZE DYNAMIC PARAMETERS FOR THE NEW CHAT
+        rv$mgr <- "Call the manager ?"
+        rv$stop <- 0
+        rv$timer <- 60
+        rv$x0<- Sys.time()
+        rv$usrtime <- Sys.time()
+    }
+    
+    output$nextroundtxt <- renderText({
+        "Your survey is now saved. Wanna do another round?"
+    })
+    
+    # RENDER OUTPUT TEXT FOR RESULTS PAGE
+    output$result <- renderText({
+        if ((rv$timing!="" & rv$accuracy != "")) 
+            {
+            if (input$currentchatid==1) {
+                ''
+            }
+            else if(rv$timing<=5 &  rv$accuracy >=75)#(as.numeric(sub(".*:","",rv$timing))<=5 &  as.numeric(gsub("[\\%,]","",sub(".*is ","",rv$accuracy)))>=75)
+            {
+                '<span style="color: Orange"><i>Fast as an arrow, accurate as a Hawkeye.</i><br/></span>
+                <span style="color: green">Your are on spot, keep up the good work!</span>'
+            }
+            else if(rv$timing <=5 & rv$accuracy<75) #(as.numeric(sub(".*:","",rv$timing))<=5 & as.numeric(gsub("[\\%,]","",sub(".*is ","",rv$accuracy)))<75)
+            {
+                '<span style="color: Orange"><i>"You certainly are the flash, but watch where you are going"</i><br/></span>
+                <span style="color: Tomato">You got the speed, but seems like you are going a little off the track</span>'
+            }
+            else if(rv$timing>5 & rv$accuracy>=75)#(as.numeric(sub(".*:","",rv$timing))>5 & as.numeric(gsub("[\\%,]","",sub(".*is ","",rv$accuracy)))>=75)
+            {
+                '<span style="color: Orange"><i>"Slow, but steady."</i><br/></span>
+                <span style="color: green">You are doing great, just try to work on your speed</span>'
+            }
+            else if(rv$timing>5 & rv$accuracy<75)#(as.numeric(sub(".*:","",rv$timing))>5 & as.numeric(gsub("[\\%,]","",sub(".*is ","",rv$accuracy)))<75)
+            {
+                '<span style="color: Orange"><i>You got to gear up, mate.</i><br/></span>
+                <span style="color: Tomato">Take a deep breath, you got this!</span>'
+            }
+            else
+            {
+                'NA'
+            }
+        }
+        else
+        {
+            ''
+        }
+        
+    })
+    
+    # RENDER OUTPUT IMAGES FOR RESULTS PAGE
+    output$resultimage <- renderImage({
+       if (rv$timing!="" & rv$accuracy != "") {
+           if (input$currentchatid==1) {
+               filename <- normalizePath(file.path('./images/result',
+                                                   paste('Capture', '.JPG', sep='')))
+           }
+           else if(rv$timing<=5 & rv$accuracy>=75)#(as.numeric(sub(".*:","",rv$timing))<=5 & as.numeric(gsub("[\\%,]","",sub(".*is ","",rv$accuracy)))>=75)
+           {
+               filename <- normalizePath(file.path('./images/result',
+                                                   paste('FastBest', '.gif', sep='')))
+           }
+           else if(rv$timing<=5 & rv$accuracy<75)#(as.numeric(sub(".*:","",rv$timing))<=5 & as.numeric(gsub("[\\%,]","",sub(".*is ","",rv$accuracy)))<75)
+           {
+               filename <- normalizePath(file.path('./images/result',
+                                                   paste('FastWorst', '.gif', sep='')))
+           }
+           else if(rv$timing>5 & rv$accuracy>=75)#(as.numeric(sub(".*:","",rv$timing))>5 & as.numeric(gsub("[\\%,]","",sub(".*is ","",rv$accuracy)))>=75)
+           {
+               filename <- normalizePath(file.path('./images/result',
+                                                   paste('SlowBest', '.gif', sep='')))
+           }
+           else if(rv$timing>5 & rv$accuracy<75)#(as.numeric(sub(".*:","",rv$timing))>5 & as.numeric(gsub("[\\%,]","",sub(".*is ","",rv$accuracy)))<75)
+           {
+               filename <- normalizePath(file.path('./images/result',
+                                                   paste('SlowWorst', '.gif', sep='')))
+           }
+           else
+           {
+               'NA'
+           }  
+       }
+       else{
+           filename <- normalizePath(file.path('./images/result',
+                                               paste('Capture', '.JPG', sep='')))
+       }
+        list(src = filename,
+             width=100,
+             height=100,
+             alt = paste("Image number", filename))
+    }, deleteFile = FALSE)
+}
+
+#----------------------------------------------------------------------***END OF SERVER CONTROLS***--------------------------------------------------#
+#----------------------------------------------------------------------------------------------------------------------------------------------------#
+
+#--------------------------------------------------------------------------***BIND UI TO SERVER***--------------------------------------------------#
+#----------------------------------------------------------------------------------------------------------------------------------------------------#
+shinyApp(ui = ui, server = server)
+#------------------------------------------------------------------------------***END BINDING***-----------------------------------------------------#
+#----------------------------------------------------------------------------------------------------------------------------------------------------#
+
+

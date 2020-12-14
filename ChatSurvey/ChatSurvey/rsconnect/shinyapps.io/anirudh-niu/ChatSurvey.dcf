@@ -1,0 +1,13 @@
+name: ChatSurvey
+title: ChatSurvey
+username:
+account: anirudh-niu
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 2791917
+bundleId: 3896131
+url: https://anirudh-niu.shinyapps.io/ChatSurvey/
+when: 1606154721.32944
+asMultiple: FALSE
+asStatic: FALSE
+ignoredFiles: bkpcodenonamazon.txt|index.css|index.js|index_bkp.js

@@ -1,0 +1,25 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1602709820298.000,
+    "dirty" : false,
+    "encoding" : "UTF-8",
+    "folds" : "",
+    "hash" : "0",
+    "id" : "76774718",
+    "lastKnownWriteTime" : 1607908383,
+    "last_content_update" : 1607908383192,
+    "path" : "D:/Projects/665/ChatSurvey/ChatSurvey/app.R",
+    "project_path" : "ChatSurvey/app.R",
+    "properties" : {
+        "cursorPosition" : "37,16",
+        "scrollLine" : "27"
+    },
+    "read_only" : false,
+    "read_only_alternatives" : [
+    ],
+    "relative_order" : 1,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_source"
+}
